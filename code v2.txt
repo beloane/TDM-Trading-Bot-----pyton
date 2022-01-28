@@ -1,0 +1,156 @@
+from datetime import datetime
+import pytz
+
+def initialize(state):
+    #candles
+    state.candles_1m = list()
+    state.candles_1h = list()
+    state.candles_4h = list()
+    state.candles_1d = list()
+    state.active_candle_1m = None
+    state.start_candles = False
+    state.start_buy = False
+    #orders
+    state.entry_price = None
+    state.stop_price = None
+    state.buy_amount = None
+    state.has_position = False
+
+def cleanup_candles(inlist, days):
+    temp = inlist[:]
+    for i in range(len(inlist)):
+        if (datetime.now(pytz.UTC) - inlist[i].candle_time).days > days:
+            del(temp[i])
+    return temp
+
+class candle(object):
+    def __init__(self, candle_time, opened, high, low, closed, volume, time_frame):
+        self.candle_time = candle_time
+        self.open = opened
+        self.high = high
+        self.low = low
+        self.close = closed
+        self.volume = volume
+        self.time_frame = time_frame
+        self.color = "unassigned"
+        self.order = 0
+        
+    def __str__(self):
+        return f'{self.candle_time.strftime("%d.%m.%y %H:%M")}, o: {self.open}, h: {self.high}, l: {self.low}, c: {self.close} , v: {self.volume}, t: {self.time_frame}, co: {self.color}, or: {self.order}'
+    
+    def __repr__(self):
+        return self.candle_time.strftime("%d.%m.%y %H:%M")
+
+def set_candle(last_candle, time_frame, data = None, inlist = None):
+    if data:
+        return candle(last_candle, data.open_last, data.high_last,
+            data.low_last, data.close_last, data.volume_last, time_frame)
+    elif inlist:
+        return candle(last_candle, inlist[0].open, 
+                                    max([i.high for i in inlist]),
+                                    min([i.low for i in inlist]),
+                                    inlist[-1].close,
+                                    round(sum([i.volume for i in inlist]),2), time_frame)
+
+def color_order(inlist):
+    if inlist[-1].close > inlist[-5].close:
+        inlist[-1].color = "green"
+        if inlist[-2].color == "red":
+            inlist[-1].order = 1
+        else:
+            inlist[-1].order = (inlist[-2].order + 1) % 9
+            if inlist[-1].order == 0:
+                inlist[-1].order = 9
+    else:
+        inlist[-1].color = "red"
+        if inlist[-2].color == "green":
+            inlist[-1].order = 1
+        else:
+            inlist[-1].order = (inlist[-2].order + 1) % 9
+            if inlist[-1].order == 0:
+                inlist[-1].order = 9
+
+def set_buy_ammount(global_vars):
+    return ((float(query_balance_free("USDT")) * 0.009985) / (global_vars.entry_price - global_vars.stop_price)) * global_vars.entry_price
+
+@schedule(interval="1m", symbol="BTCUSDT", window_size = 1)
+def minuter(state, data):
+    try:
+        last_candle = datetime.fromtimestamp(data.last_time // 1000, pytz.UTC)
+    except:
+        print("Last candle is None")
+    else:
+        if not state.start_candles and last_candle.minute != 1:
+            if last_candle.minute == 0:
+                state.start_candles = True
+        else:
+            if not state.start_candles:
+                state.start_candles = True
+            
+            #candle algorithm
+            state.candles_1m.append(set_candle(last_candle, "1m", data = data))
+            state.active_candle_1m = state.candles_1m[-1]
+            
+            #setting up 1h candles and appending them to list
+            if len(state.candles_1m) == 60:
+                state.candles_1h.append(set_candle(last_candle, "1h", inlist = state.candles_1m))
+                state.candles_1m = list()
+
+                #setting up 4h candles and appending them to list
+                if len(state.candles_1h) == 4:
+                    state.candles_4h.append(set_candle(last_candle, "4h", inlist = state.candles_1h))
+                    state.candles_1h = list()
+                    state.candles_4h = cleanup_candles(state.candles_4h, 7) #coment-out for backtesting older than 7 days
+
+                    #coloring and ordering candles
+                    if len(state.candles_4h) > 4:
+                        color_order(state.candles_4h)
+                        
+                        
+                        #preps for order algorithm
+                        if (state.candles_4h[-1].color == "green") and (state.candles_4h[-1].order == 1) and (state.candles_4h[-2].color == "red"):
+                            state.entry_price, state.stop_price = state.candles_4h[-1].high + 1, state.candles_4h[-1].low - 1
+                            state.buy_amount = set_buy_ammount(state)
+                            state.start_buy = True
+
+                        elif (state.candles_4h[-1].color == "green") and (state.candles_4h[-1].order == 3):
+                            state.start_buy = False
+                
+            #buy algorithm
+            if state.start_buy:
+                if not has_open_position("BTCUSDT") and (state.entry_price - 1 < state.active_candle_1m.close) and (state.candles_1d[-1].color == "green") and (state.candles_1d[-1].order >= 2):
+                    order_market_value(symbol = "BTCUSDT", value = state.buy_amount)
+                    state.start_buy = False
+                    
+            state.has_position = query_open_position_by_symbol(symbol = "BTCUSDT", include_dust = True)
+            #sell algorithm
+            if has_open_position("BTCUSDT"):
+                if (state.stop_price + 1 > state.active_candle_1m.close):
+                    print("state.stop_price + 1 > state.active_candle_1m.close")
+                    close_position(symbol="BTCUSDT")
+                elif state.active_candle_1m.close < state.candles_4h[-4].close:
+                    print("state.active_candle_1m.close < state.candles_4h[-4].close")
+                    print(f"active.close = {state.active_candle_1m.close}, candles[-4].close = {state.candles_4h[-4].close}")
+                    close_position(symbol="BTCUSDT")
+                elif state.has_position.unrealized_pnl >= (state.buy_amount * 0.023):
+                    order_trailing_iftouched_value(symbol="BTCUSDT", value = state.has_position.position_value, trailing_percent= 0.1, stop_price = state.has_position.entry_price + state.has_position.entry_price * 0.023)
+
+
+@schedule(interval="1d", symbol="BTCUSDT", window_size = 14)
+def daily(state, data):
+    if not state.candles_1d:
+        for t, o, h, l, c, v in zip(data.times, data.open.select("open"), data.high.select("high"),
+        data.low.select("low"), data.close.select("close"), data.volume.select("volume")):
+            candle_time = datetime.fromtimestamp(t // 1000, pytz.UTC)
+            state.candles_1d.append(candle(candle_time, o, h, l, c, v, "1d"))
+        for i in range(5, len(state.candles_1d) + 1):
+            color_order(state.candles_1d[:i])
+        
+    else:
+        last_candle = datetime.fromtimestamp(data.last_time // 1000, pytz.UTC)
+        state.candles_1d.append(set_candle(last_candle, "1d", data = data))
+        color_order(state.candles_1d)
+
+@schedule(interval="1h", symbol="BTCUSDT", window_size = 1)
+def hourly(state, data):
+    pass
