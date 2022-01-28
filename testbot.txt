@@ -1,0 +1,59 @@
+POSITION SIZE CALCULATOR
+needs -> 
+	4h canddle 1 green.high
+	4h canddle 1 green .low
+	balance
+	risk % (dam noi)
+
+execution:
+
+entry price = 4h canddle 1 green .high + (0,5$ or 1$)
+stop loss price = 4h canddle 1 green .low - (0,5$ or 1$)
+risk = 1 (& definim noi)
+account_balance = get(balance)
+risk_amount = (account_balance * risk) /100
+risk_per_share = entry_price - stop_loss_price
+no_of_shares = risk_amount/risk_per_share
+entry_amount = no_of_shares * entry_price
+
+returns entry amount
+
+
+
+###################################################################################
+buy 
+
+daca (nu avem pozitie) & 
+	&((4h canddle 1 green high < active 1m canddle.close ) || ((4h canddle 2 green high < active 1m canddle.close)&& (4h canddle 1 green high < active 1m canddle.close) && 
+	&((we are in range of green canddles on daily [2,9]) {folosim limit buy} - ramane de vazut randu asta &&
+	&(4h candle 1 green is not after a 4h candle 9 green)
+                   
+stoploss
+
+daca 		((avem pozitie) && (4h canddle 1 green.low > active 1m canddle.close)) ||
+		|| ((avem pozitie) && (4h canddle[-4] any .close > active 1m canddle.close)  {folosim market order}
+
+take profit 	 (avem pozitie) && (pnl >2%) { mutam limit sell order la 2%} + {folosim trailing}
+###################################################################################
+buy_order = order_limit_value("BTCUSDT", 1000.0, 8050.00)
+sell_order = order_limit_value("BTCUSDT", -1000.0, 8050.00)
+
+order_limit_target(symbol="BTCUSDT", target_percent=0.25, limit_price=8050.0)
+
+buy_order = order_iftouched_market_value("BTCUSDT", 1000.0, 8050.00)
+sell_order = order_iftouched_market_value("BTCUSDT", -1000.0, 8050.00)
+
+buy_order = order_iftouched_limit_value("BTCUSDT", 1000.0, 8050.00, 7800.00)
+sell_order = order_iftouched_limit_value("BTCUSDT", -1000.0, 8050.00, 7800.00)
+
+buy_order = order_trailing_iftouched_value("BTCUSDT", 1000.0, 0.1, 8050.00)
+sell_order = order_trailing_iftouched_value("BTCUSDT", -1000.0, 0.1, 8050.00)
+
+
+has_open_position("BTCUSDT")
+has_open_position(symbol="BTC", include_dust=True)
+
+query_open_position_by_symbol("BTCUSDT")
+query_open_position_by_symbol(symbol="BTC", include_dust=True)
+
+query_position_pnl(symbol="BTCUSDT")
